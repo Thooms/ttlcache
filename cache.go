@@ -1,6 +1,7 @@
 package ttlcache
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -16,7 +17,7 @@ type ExpireCallback func(key string, value interface{})
 type ExpireReasonCallback func(key string, reason EvictionReason, value interface{})
 
 // LoaderFunction can be supplied to retrieve an item where a cache miss occurs. Supply an item specific ttl or Duration.Zero
-type LoaderFunction func(key string) (data interface{}, ttl time.Duration, err error)
+type LoaderFunction func(ctx context.Context, key string) (data interface{}, ttl time.Duration, err error)
 
 // Cache is a synchronized map of items that can auto-expire once stale
 type Cache struct {
@@ -265,7 +266,7 @@ func (cache *Cache) SetWithTTL(key string, data interface{}, ttl time.Duration) 
 
 // Get is a thread-safe way to lookup items
 // Every lookup, also touches the item, hence extending it's life
-func (cache *Cache) Get(key string) (interface{}, error) {
+func (cache *Cache) Get(ctx context.Context, key string) (interface{}, error) {
 	cache.mutex.Lock()
 	if cache.isShutDown {
 		cache.mutex.Unlock()
@@ -310,7 +311,7 @@ func (cache *Cache) Get(key string) (interface{}, error) {
 			cache.loaderLock[key] = m
 			cache.mutex.Unlock()
 			// cache is not blocked during IO
-			dataToReturn, err = cache.invokeLoader(key)
+			dataToReturn, err = cache.invokeLoader(ctx, key)
 			cache.mutex.Lock()
 			m.Broadcast()
 			// cleanup so that we don't block consecutive access.
@@ -327,10 +328,10 @@ func (cache *Cache) Get(key string) (interface{}, error) {
 	return dataToReturn, err
 }
 
-func (cache *Cache) invokeLoader(key string) (dataToReturn interface{}, err error) {
+func (cache *Cache) invokeLoader(ctx context.Context, key string) (dataToReturn interface{}, err error) {
 	var ttl time.Duration
 
-	dataToReturn, ttl, err = cache.loaderFunction(key)
+	dataToReturn, ttl, err = cache.loaderFunction(ctx, key)
 	if err == nil {
 		err = cache.SetWithTTL(key, dataToReturn, ttl)
 		if err != nil {
